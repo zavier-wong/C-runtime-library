@@ -26,7 +26,7 @@ static void crt_error(const char *);
 //---------------------------
 void entry(){
     int ret=0;
-    int argc=64;
+    int argc=0;
 
 //parse Windows commond line argument
 #if defined(WIN32)
