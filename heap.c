@@ -87,8 +87,8 @@ static void* crt_extend_heap(heap_header* h, size_t size){
     if(!base)
         return 0;
 #endif
-	h->next = (heap_header*)base;
-	tmp = (heap_header*)base;
+    h->next = (heap_header*)base;
+    tmp = (heap_header*)base;
     tmp->type = BLOCK_FREE;
     tmp->size = asize;
     tmp->prev = h;
@@ -144,11 +144,11 @@ void* malloc(size_t size){
     heap_header* ph = heap_list;
     while(ph) {
     	if(ph->next == NULL) {
-			size_t extendsize = asize > CHUNKSIZE ? asize : CHUNKSIZE;
-			ph = crt_extend_heap(ph, extendsize);
-		}
-		if(ph->type == BLOCK_USED){
-			ph = ph->next;
+            size_t extendsize = asize > CHUNKSIZE ? asize : CHUNKSIZE;
+            ph = crt_extend_heap(ph, extendsize);
+        }
+        if(ph->type == BLOCK_USED){
+            ph = ph->next;
             continue;
         }
         if(ph->size > asize && ph->size < asize + HEAD_SIZE ){
