@@ -27,11 +27,17 @@ typedef struct _heap_header{
     struct _heap_header *next;      //prev block
 } heap_header;
 
-#define HEAD_SIZE (sizeof(heap_header))
-#define addr_offset(addr,offset) ((char*)addr+offset)
-
 //heap block list
 static heap_header* heap_list=NULL;
+
+#define HEAD_SIZE (sizeof(heap_header))
+#define addr_offset(addr,offset) ((char*)addr+offset)
+#define CHUNKSIZE (1<<12)
+#define ALIGN 8
+
+static size_t round_up(size_t size) {
+	return (((size) + ALIGN-1) & ~(ALIGN - 1));
+}
 
 #ifdef __linux
 //brk system call
@@ -68,25 +74,45 @@ static void* sbrk(int increment){
 }
 #endif
 
+static void* crt_extend_heap(heap_header* h, size_t size){
+	size_t asize = round_up(size);
+	void* base = NULL;
+	heap_header* tmp = NULL;
+#ifdef WIN32
+    base = VirtualAlloc(0,asize,MEM_COMMIT | MEM_RESERVE,PAGE_READWRITE);
+    if(base == NULL)
+        return 0;
+#else
+    base = sbrk(asize);
+    if(!base)
+        return 0;
+#endif
+	h->next = (heap_header*)base;
+	tmp = (heap_header*)base;
+    tmp->type = BLOCK_FREE;
+    tmp->size = asize;
+    tmp->prev = h;
+    tmp->next = NULL;
+    return tmp;
+}
 //initialize the heap 
 int crt_heap_init(){
-    //100MB heap size
-    int heap_size=1024 * 1024 * 100;
-    void* base=NULL;
+    int heap_size = CHUNKSIZE;
+    void* base = NULL;
 #ifdef WIN32
-    base=VirtualAlloc(0,heap_size,MEM_COMMIT | MEM_RESERVE,PAGE_READWRITE);
+    base = VirtualAlloc(0,heap_size,MEM_COMMIT | MEM_RESERVE,PAGE_READWRITE);
     if(base == NULL)
         return 1;
 #else
-    base=sbrk(heap_size);
+    base = sbrk(heap_size);
     if(!base)
         return 1;
 #endif
-    heap_list=(heap_header*)base;
-    heap_list->type=BLOCK_FREE;
-    heap_list->size=heap_size;
-    heap_list->prev=NULL;
-    heap_list->next=NULL;
+    heap_list = (heap_header*)base;
+    heap_list->type = BLOCK_FREE;
+    heap_list->size = heap_size;
+    heap_list->prev = NULL;
+    heap_list->next = NULL;
     return 0;
 }
 
@@ -94,46 +120,55 @@ int crt_heap_init(){
 void free(void *p){
     if(!p)
         return;
-    heap_header* ph=(heap_header*)addr_offset(p,-HEAD_SIZE);
-    if(ph->type!=BLOCK_USED)
+    heap_header* ph = (heap_header*)addr_offset(p,-HEAD_SIZE);
+    if(ph->type != BLOCK_USED)
         return;
-    ph->type=BLOCK_FREE;
-    ph->next->type;
+    ph->type = BLOCK_FREE;
+    //ph->next->type;
     if(ph->next != NULL && ph->next->type == BLOCK_FREE){
-        ph->size+=ph->next->size;
-        ph->next=ph->next->next;
+        ph->size += ph->next->size;
+        ph->next = ph->next->next;
     }
     if(ph->prev != NULL && ph->prev->type == BLOCK_FREE){
-        ph=ph->prev;
-        ph->size+=ph->next->size;
-        ph->next=ph->next->next;
+        ph = ph->prev;
+        ph->size += ph->next->size;
+        ph->next = ph->next->next;
     }
 }
 
 //If the request size is larger than the free block, the free block is cut
 void* malloc(size_t size){
-    if(size==0)
+    if(size == 0)
         return NULL;
-    heap_header* ph=heap_list;
-    for(;ph;ph=ph->next){
-        if(ph->type == BLOCK_USED){
+    size_t asize = round_up(size) + HEAD_SIZE;
+    heap_header* ph = heap_list;
+    while(ph) {
+    	if(ph->next == NULL) {
+			size_t extendsize = asize > CHUNKSIZE ? asize : CHUNKSIZE;
+			ph = crt_extend_heap(ph, extendsize);
+		}
+		if(ph->type == BLOCK_USED){
+			ph = ph->next;
             continue;
         }
-        if(ph->size > size+HEAD_SIZE && ph->size < size+HEAD_SIZE*2 ){
-            ph->type=BLOCK_USED;
-            return addr_offset(ph,HEAD_SIZE);
+        if(ph->size > asize && ph->size < asize + HEAD_SIZE ){
+            ph->type = BLOCK_USED;
+            return addr_offset(ph, HEAD_SIZE);
         } 
-        if(ph->size > size+HEAD_SIZE*2){
+        if(ph->size > asize + HEAD_SIZE){
             ph->type=BLOCK_USED; 
-            heap_header* tmp=addr_offset(ph,HEAD_SIZE+size);
-            tmp->type=BLOCK_FREE;
-            tmp->next=ph->next;
-            tmp->prev=ph;
-            tmp->size=ph->size-size-HEAD_SIZE;
-            ph->next=tmp;
-            ph->size=HEAD_SIZE+size;
+            heap_header* tmp = addr_offset(ph, asize);
+            tmp->type = BLOCK_FREE;
+            tmp->next = ph->next;
+            tmp->prev = ph;
+            tmp->size = ph->size-asize;
+            ph->next = tmp;
+            ph->size = asize;
             return addr_offset(ph,HEAD_SIZE);
         }
-    }
+        size_t extendsize = asize > CHUNKSIZE ? asize : CHUNKSIZE;
+		ph = crt_extend_heap(ph, extendsize);
+	}
+    
     return NULL;
 }
